@@ -1,0 +1,148 @@
+name: VideoDL GitHub issue parser
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: videodl-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: contains(github.event.issue.labels.*.name, 'videodl-request')
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Set up Deno for yt-dlp
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Install yt-dlp
+        run: python -m pip install --disable-pip-version-check -U "yt-dlp[default]"
+      - name: Parse video and prepare public result
+        id: parse
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess, sys
+          from urllib.parse import urlparse
+
+          body = os.environ.get("ISSUE_BODY", "")
+          match = re.search(r"视频链接：\\s*(https?://[^\\s<>]+)", body, re.I)
+          if not match:
+              print("::error::Issue body has no valid video URL")
+              sys.exit(1)
+          url = match.group(1).rstrip(".,，。)")
+          host = (urlparse(url).hostname or "").lower().rstrip(".")
+          allowed = (
+              "youtube.com", "youtu.be", "youtube-nocookie.com",
+              "bilibili.com", "bilibili.tv", "b23.tv", "tiktok.com",
+              "douyin.com", "vimeo.com", "twitter.com", "x.com",
+              "instagram.com", "facebook.com", "fb.watch", "twitch.tv",
+              "dailymotion.com", "reddit.com", "soundcloud.com",
+              "nicovideo.jp", "weibo.com", "acfun.cn", "ixigua.com",
+              "youku.com", "iqiyi.com"
+          )
+          if not host or not any(host == d or host.endswith("." + d) for d in allowed):
+              print("::error::Unsupported video host")
+              sys.exit(1)
+
+          try:
+              proc = subprocess.run(
+                  ["yt-dlp", "--no-config", "--no-warnings", "--no-playlist",
+                   "--skip-download", "--dump-single-json", "--socket-timeout", "15",
+                   "--retries", "1", url],
+                  check=True, capture_output=True, text=True, timeout=240
+              )
+              info = json.loads(proc.stdout)
+          except subprocess.TimeoutExpired:
+              print("::error::解析超时，请稍后重新提交。")
+              sys.exit(1)
+          except subprocess.CalledProcessError as exc:
+              detail = (exc.stderr or "yt-dlp 无法解析此视频。")[-1200:]
+              print("::error::" + detail.replace("\\n", " "))
+              sys.exit(1)
+          except Exception as exc:
+              print("::error::解析失败：" + str(exc)[:500])
+              sys.exit(1)
+
+          def esc(value):
+              return str(value or "").replace("|", "\\|").replace("\\n", " ").replace("\\r", " ")
+
+          formats = []
+          for f in info.get("formats") or []:
+              media = f.get("url") or ""
+              if not media.startswith(("https://", "http://")):
+                  continue
+              if f.get("protocol") not in ("http", "https"):
+                  continue
+              height = f.get("height")
+              label = (str(height) + "p" if height else (f.get("format_note") or "原始格式"))
+              label += " · " + str(f.get("ext") or "媒体")
+              if f.get("fps"):
+                  label += " · " + str(f["fps"]) + " FPS"
+              size = f.get("filesize") or f.get("filesize_approx")
+              if size:
+                  label += " · " + str(round(size / 1024 / 1024, 1)) + " MB"
+              formats.append((label, media))
+              if len(formats) >= 12:
+                  break
+
+          title = esc(info.get("title") or "未命名视频")
+          uploader = esc(info.get("uploader") or "未知")
+          page = info.get("webpage_url") or url
+          lines = [
+              "## VideoDL 解析结果",
+              "",
+              "**标题：** " + title,
+              "**上传者：** " + uploader,
+              "**来源：** " + page,
+              "",
+              "> 以下是 yt-dlp 返回的源站直链。链接可能包含临时签名，并且可能受登录、地区或 Referer 限制。公开 Issue 中的内容任何人都能看到。",
+              ""
+          ]
+          if formats:
+              lines += ["| 格式 | 源站直链 |", "|---|---|"]
+              for label, media in formats:
+                  # Keep each direct URL visible in the public issue as agreed by the requester.
+                  lines.append("| " + esc(label) + " | [打开/下载](" + media.replace(")", "%29") + ") |")
+          else:
+              lines += ["没有找到可直接通过 HTTP/HTTPS 下载的单一媒体格式。视频可能使用分离音视频或 HLS/DASH。"]
+          lines += ["", "---", "由 GitHub Actions 自动解析 · yt-dlp"]
+          with open("result.md", "w", encoding="utf-8") as f:
+              f.write("\\n".join(lines))
+          PY
+      - name: Publish result as an issue comment
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('result.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+      - name: Report failure in the issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: "## VideoDL 解析失败\n\n本次任务未能完成。可能是链接不受支持、视频需要登录、地区受限或解析超时。请确认链接后重新创建一个带有 **videodl-request** 标签的解析请求。\n\n注意：公开 Issue 中的链接和结果对所有人可见，请勿提交私人视频或含有个人令牌的链接。"
+            });
