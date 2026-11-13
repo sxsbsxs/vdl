@@ -1,4 +1,3 @@
-// GitHub Pages is a static host; point this at the separately deployed VideoDL API.
-// Example: window.VIDEODL_API_BASE = "https://your-api-service.onrender.com";
-// Leave empty when the frontend is served by the C++ server itself.
+// VideoDL submits parsing requests through GitHub Issues and GitHub Actions.
+// No external API endpoint or frontend secret is required.
 window.VIDEODL_API_BASE = "";
