@@ -55,6 +55,24 @@ docker run --rm -p 10000:10000 -e PORT=10000 videodl
 
 浏览器打开 <http://localhost:10000>。
 
+## GitHub Pages 静态网站部署
+
+本仓库包含一个 Pages 工作流，会将 `frontend/` 目录发布为 GitHub Pages 项目站点：
+
+1. 打开仓库的 **Settings → Pages**。
+2. 在 **Build and deployment → Source** 中选择 **GitHub Actions**。
+3. 保存后，打开 **Actions** 标签页，查看 **Deploy VideoDL website to GitHub Pages** 工作流。
+4. 工作流成功后，网站地址为 <https://sxsbsxs.github.io/vdl/>。
+5. 之后更新 `frontend/` 目录并推送到 `main`，会自动重新发布。
+
+GitHub Pages 只托管静态前端。要启用视频解析，先把 C++/yt-dlp API 部署到一个支持 Docker 的后端平台，再编辑 `frontend/config.js`，设置：
+
+```js
+window.VIDEODL_API_BASE = "https://你的后端域名";
+```
+
+配置后提交，Pages 会再次自动发布。后端必须允许 GitHub Pages 域名的跨域请求（当前 VideoDL API 已允许跨域请求）。如果尚未填写 API 地址，网页会明确提示“解析 API 还没有连接”，不会把静态页面误报为解析成功。
+
 ## Render 免费部署（无需主动添加银行卡）
 
 1. 将本仓库推送到 GitHub，并确保仓库为 Public 或 Render 账号有权限访问。
