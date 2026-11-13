@@ -1,5 +1,0 @@
-.git
-.github
-build
-cmake-build-*
-*.log

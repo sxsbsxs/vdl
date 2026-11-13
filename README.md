@@ -1,98 +1,105 @@
 # VideoDL
 
-VideoDL 是一个完全基于 GitHub 的开源在线视频链接解析工具。网站由 **GitHub Pages** 托管，解析任务由 **GitHub Actions + yt-dlp** 执行，不需要购买服务器、租用 VPS 或接入第三方后端平台。
+VideoDL 是一个手机和电脑都能打开的在线视频解析下载网页。
 
-## 在线使用
+**使用方式：打开 Cloudflare 分配的网址 → 粘贴视频页面链接 → 点击“解析视频” → 点击“下载最佳画质”。**
 
-网站：<https://sxsbsxs.github.io/vdl/>
-
-1. 打开网站，粘贴公开视频页面链接。
-2. 点击“解析视频”，页面会打开 GitHub 的新 Issue 页面。
-3. 登录 GitHub，确认视频链接后创建 Issue。
-4. GitHub Actions 会自动启动 yt-dlp 解析任务。
-5. 解析完成后，结果会作为评论出现在该 Issue 下。
-
-**重要：** 使用者必须登录 GitHub 才能提交请求。Issue、视频页面链接和解析结果都是公开的，任何人都能查看。请勿提交私人视频、Cookie、访问令牌或其他敏感链接。
-
-## 工作原理
+## 新架构
 
 ```text
-手机/电脑浏览器
-      |
-      v
-GitHub Pages（静态网站）
-      |
-      v
-GitHub Issues（提交视频链接）
-      |
-      v
-GitHub Actions（临时运行环境）
-      |
-      v
-yt-dlp + Deno（解析）
-      |
-      v
-Issue 评论（返回标题、格式和源站直链）
-      |
-      v
-用户浏览器直接访问源站媒体
+浏览器
+  │
+  ▼
+Cloudflare Worker（统一网址、API 路由）
+  ├── HTML / CSS / JavaScript（静态前端）
+  │
+  └── Durable Object
+         │
+         ▼
+      Cloudflare Container（Linux / amd64）
+         ├── C++17 HTTP API
+         ├── yt-dlp 独立 Linux 可执行文件（解析网站）
+         └── FFmpeg + Deno（媒体合并和部分站点提取支持）
 ```
 
-- GitHub Pages 只负责展示前端。
-- GitHub Actions 按需运行解析任务，不是常驻 API 服务，因此任务可能需要排队，不保证实时返回。
-- VideoDL 不在 GitHub Actions 中下载、保存或中转完整视频文件，只返回 yt-dlp 提供的源站 HTTP/HTTPS 直链。
-- 前端不包含 GitHub Token 或其他密钥。
-- 解析结果评论公开可见，部分直链可能带有临时签名或访问参数。
+后端 HTTP 服务使用 C++17。没有 Python Web 服务，也不再使用 GitHub Issues 进行解析。C++ 通过安全的子进程参数调用 yt-dlp 独立可执行文件，避免自己维护数十个网站的解析规则。yt-dlp 的独立 Linux 发布文件由 Docker 构建时下载。
 
-## 技术栈
+## 功能
 
+- 网页直接输入 Bilibili、YouTube、抖音等视频页面链接。
+- 返回标题、封面、作者、时长和可用格式信息。
+- 点击下载按钮，由 C++ 后端调用 yt-dlp 获取最佳可用画质。
+- FFmpeg 在需要时合并分离的视频和音频流。
+- 下载文件通过 HTTP 流式返回浏览器，不需要在网页里粘贴媒体直链。
+- 基于 Cloudflare Worker + Durable Object + Container 部署。
+- 前端和 API 使用同一个网址，不需要单独填写 API 地址。
+
+## 目前支持范围
+
+项目使用 yt-dlp 的站点提取器。实际可解析性取决于 yt-dlp 支持情况、源站变化、地区限制、账号权限和视频本身的访问设置。公开视频优先；本项目不提供 Cookie 注入、不绕过 DRM、付费墙或其他访问控制。
+
+## 部署到 Cloudflare
+
+**注意费用：Cloudflare Containers 不是 Workers Free 免费功能。** 需要 Workers Paid（最低 5 美元/月）；容器活跃运行时间、CPU、内存、磁盘和容器出站流量可能继续计费。下载由容器流式传回，也会使用容器出站流量。部署前先检查 Cloudflare 官方价格：
+
+- <https://developers.cloudflare.com/workers/platform/pricing/>
+- <https://developers.cloudflare.com/containers/platform/pricing/>
+
+### 1. Cloudflare 准备
+
+1. 登录 Cloudflare，启用 Workers Paid。
+2. 在 Cloudflare Dashboard → My Profile → API Tokens 创建 API Token。
+3. 授权部署所需的 Workers Scripts、Containers 和 Account Settings 读取权限。
+4. 复制 Cloudflare Account ID。
+
+### 2. GitHub Secrets
+
+打开本仓库 Settings → Secrets and variables → Actions，添加：
+
+| Name | Value |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | 上一步创建的 API Token |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |
+
+不要把 Token 写进源码或前端。
+
+### 3. 发布
+
+将本次重构 PR 合并到 `main`。GitHub Actions 会自动构建 C++ 容器镜像并部署 Worker。也可以在 Actions 页面手动运行 **Deploy VideoDL to Cloudflare**。
+
+首次部署后 Cloudflare 需要配置容器镜像和实例，可能要等几分钟才可解析。部署成功后，在 Cloudflare Workers & Pages 中打开 `videodl`，使用它分配的 `workers.dev` 地址访问网页。
+
+## API
+
+- `GET /api/health`：服务健康检查。
+- `POST /api/resolve`：JSON 请求体 `{"url":"https://视频页面链接"}`，返回视频元数据与格式信息。
+- `GET /api/download?url=...`：调用 yt-dlp 下载最佳可用画质，并以附件流返回。
+
+## 本地构建容器
+
+需要 Docker：
+
+```bash
+docker build --platform linux/amd64 -t videodl .
+docker run --rm -p 10000:10000 videodl
+```
+
+本地 API 地址：`http://localhost:10000/api/health`。
+
+## 安全和限制
+
+- 后端只接受代码中列出的常见视频站点域名；不会把任意 URL 当成通用代理。
+- 输入的页面 URL 会在服务器端检查协议和主机名。
+- 解析和下载有超时、请求大小限制和基础 IP 频率限制。
+- 下载任务会在临时目录生成文件，响应结束后清理。
+- 不要提交私人视频链接、Cookie、访问令牌或其他敏感信息。
+- 仅下载你拥有权利或获得许可的内容，并遵守来源网站条款及当地法律。
+
+## 技术栈与许可
+
+- C++17、cpp-httplib、nlohmann/json
 - HTML、CSS、原生 JavaScript
-- GitHub Pages
-- GitHub Issues
-- GitHub Actions
-- Python、yt-dlp（default extras）、Deno
-- C++17 后端源码仍保留在 `backend/`，可用于未来自行部署常驻 API；当前在线网站不依赖该后端。
+- Cloudflare Workers、Durable Objects、Containers
+- yt-dlp、FFmpeg、Deno
 
-## 支持站点
-
-当前工作流只接受以下站点域名，且实际解析能力取决于 yt-dlp 上游支持情况：
-
-- YouTube、Bilibili
-- TikTok、抖音
-- Vimeo、X / Twitter
-- Instagram、Facebook、Twitch
-- Dailymotion、Reddit、SoundCloud
-- Niconico、微博、AcFun、西瓜视频
-- 优酷、爱奇艺
-
-## 项目文件
-
-- `frontend/`：GitHub Pages 网站。
-- `.github/workflows/pages.yml`：自动发布静态网站。
-- `.github/workflows/resolve-issue.yml`：监听 VideoDL Issue，运行 yt-dlp 并回写解析结果。
-- `.github/ISSUE_TEMPLATE/videodl-request.md`：解析请求模板。
-- `backend/`、`Dockerfile`、`CMakeLists.txt`：可选的 C++ 常驻 API 后端源码。
-
-## GitHub Actions 设置
-
-解析工作流需要仓库允许 Actions 运行，并允许工作流使用内置令牌写入 Issue 评论：
-
-1. 打开仓库 **Settings → Actions → General**。
-2. 在 **Workflow permissions** 中选择 **Read and write permissions**，以允许工作流使用内置令牌发布 Issue 评论；解析工作流在 YAML 中仅申请 `contents: read` 和 `issues: write`。
-3. 确认 Actions 没有被仓库设置禁用。
-
-如果工作流运行失败，请打开仓库 **Actions**，进入对应的 VideoDL GitHub issue parser 运行记录查看日志。
-
-## 当前限制与安全说明
-
-- 这是 GitHub 驱动的异步解析工具，不是实时 API。Actions 可能排队、失败或受到 GitHub 使用限制。
-- 提交者需要 GitHub 账号；匿名访客不能直接创建 Issue。
-- Issue 和评论公开可见，源视频 URL 与直链可能包含临时访问参数。不要提交私人或敏感链接。
-- 仅允许工作流中列出的站点域名。不要将该工作流视为通用 URL 抓取器。
-- 仅展示可识别的 HTTP/HTTPS 直链。部分网站使用分离音视频、HLS/DASH、Referer 校验或防盗链，可能无法通过普通浏览器直接下载。
-- yt-dlp 支持站点和解析结果会随源站策略及上游版本变化。
-- 请只下载你拥有权利或获得许可的内容，并遵守来源网站条款及当地法律。
-
-## 许可证
-
-MIT，详见 [LICENSE](LICENSE)。
+VideoDL 主项目采用 MIT License。yt-dlp、FFmpeg、Deno 及构建依赖均为独立第三方项目，分别遵循其各自许可证。
