@@ -24,7 +24,7 @@ ENV XDG_CACHE_HOME=/tmp/.cache
 ENV DENO_INSTALL=/usr/local
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl ffmpeg libstdc++6 \
+    ca-certificates curl ffmpeg libstdc++6 unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # yt-dlp_linux is the upstream standalone x86_64 release binary.
