@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: videodl
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: YTDLP_BIN
+        value: /opt/venv/bin/yt-dlp
