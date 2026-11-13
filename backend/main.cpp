@@ -1,9 +1,11 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cctype>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -103,11 +105,15 @@ bool is_http_url(const std::string &url) {
 }
 
 std::string client_ip(const httplib::Request &req) {
+    // Render's trusted edge proxy appends the connecting client address to this chain.
     std::string forwarded = req.get_header_value("X-Forwarded-For");
-    const auto comma = forwarded.find(',');
-    if (comma != std::string::npos) forwarded = forwarded.substr(0, comma);
-    forwarded = trim(forwarded);
-    return forwarded.empty() ? "unknown" : forwarded;
+    if (!forwarded.empty()) {
+        const auto comma = forwarded.rfind(',');
+        if (comma != std::string::npos) forwarded = forwarded.substr(comma + 1);
+        forwarded = trim(forwarded);
+        if (!forwarded.empty()) return forwarded;
+    }
+    return req.remote_addr.empty() ? "unknown" : req.remote_addr;
 }
 
 bool allow_request(const std::string &ip) {
@@ -263,9 +269,7 @@ std::string json_string(const json &object, const char *key,
 }
 
 json nullable_number(const json &object, const char *key) {
-    if (object.is_object() && object.contains(key) && object[key].is_number()) {
-        return object[key];
-    }
+    if (object.is_object() && object.contains(key) && object[key].is_number()) return object[key];
     return nullptr;
 }
 
@@ -308,8 +312,8 @@ json filter_info(const json &info, const std::string &source_url) {
 
     std::sort(result["formats"].begin(), result["formats"].end(),
               [](const json &a, const json &b) {
-        const int ah = a.value("height", 0);
-        const int bh = b.value("height", 0);
+        const int ah = a.contains("height") && a["height"].is_number() ? a["height"].get<int>() : 0;
+        const int bh = b.contains("height") && b["height"].is_number() ? b["height"].get<int>() : 0;
         if (ah != bh) return ah > bh;
         if (a.value("has_audio", false) != b.value("has_audio", false)) {
             return a.value("has_audio", false);
@@ -336,7 +340,6 @@ int main() {
     server.Options(R"(.*)", [](const httplib::Request &, httplib::Response &res) {
         res.status = 204;
     });
-
     server.Get("/api/health", [](const httplib::Request &, httplib::Response &res) {
         set_json(res, 200, {
             {"online", true}, {"service", "VideoDL"},
@@ -349,7 +352,6 @@ int main() {
             set_json(res, 429, {{"error", "请求过于频繁，请稍后再试。"}, {"retry_after_seconds", 60}});
             return;
         }
-
         json input;
         try {
             input = json::parse(req.body);
@@ -368,7 +370,6 @@ int main() {
             set_json(res, 400, {{"error", "视频链接为空或格式无效。"}});
             return;
         }
-
         if (get_allowed_host(url).empty()) {
             set_json(res, 400, {
                 {"error", "暂不支持这个链接域名。当前版本仅接受常见视频站点链接。"},
