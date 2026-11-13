@@ -2,7 +2,6 @@
 name: VideoDL 视频解析请求
 about: 提交一个公开视频链接，由 GitHub Actions 使用 yt-dlp 解析
 title: "VideoDL 解析请求"
-labels: videodl-request
 ---
 
 视频链接：
