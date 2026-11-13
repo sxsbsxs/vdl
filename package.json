@@ -1,0 +1,15 @@
+{
+  "name": "videodl-cloudflare",
+  "private": true,
+  "version": "2.0.0",
+  "description": "VideoDL on Cloudflare Containers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "containers:list": "wrangler containers list",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}
