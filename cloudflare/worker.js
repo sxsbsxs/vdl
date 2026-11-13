@@ -24,12 +24,9 @@ export class VideoDLContainer extends DurableObject {
     // Do not trust a caller-supplied forwarding chain for the C++ rate limiter.
     const clientIp = request.headers.get("CF-Connecting-IP");
     if (clientIp) headers.set("X-Forwarded-For", clientIp);
-    const forwarded = new Request(url, {
-      method: request.method,
-      headers,
-      body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
-      redirect: "manual"
-    });
+    const forwarded = new Request(url, request);
+    forwarded.headers.delete("host");
+    if (clientIp) forwarded.headers.set("X-Forwarded-For", clientIp);
     return this.ctx.container.getTcpPort(CONTAINER_PORT).fetch(forwarded);
   }
 
