@@ -8,7 +8,6 @@
     {
       "class_name": "VideoDLContainer",
       "scheduling_policy": "durable_object",
-      "max_instances": 3,
       "images": {
         "base": {
           "dockerfile": "./Dockerfile"
