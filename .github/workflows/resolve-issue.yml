@@ -73,14 +73,13 @@ jobs:
           except subprocess.CalledProcessError as exc:
               print("::error::yt-dlp 无法解析此视频。请检查链接、地区限制或登录要求。")
               sys.exit(1)
-              print("::error::" + detail.replace("\n", " "))
               sys.exit(1)
           except Exception as exc:
               print("::error::解析失败。请稍后重试并检查 Actions 日志。")
               sys.exit(1)
 
           def esc(value):
-              return str(value or "").replace("|", "\\|").replace("\\n", " ").replace("\r", " ")
+              return str(value or "").replace("|", "\|").replace("\n", " ").replace("\r", " ")
 
           formats = []
           for f in info.get("formats") or []:
