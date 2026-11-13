@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "videodl",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-11-13",
+  "compatibility_flags": [],
+  "containers": [
+    {
+      "class_name": "VideoDLContainer",
+      "scheduling_policy": "durable_object",
+      "max_instances": 3,
+      "images": {
+        "base": {
+          "dockerfile": "./Dockerfile"
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "VIDEODL_CONTAINER",
+        "class_name": "VideoDLContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["VideoDLContainer"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
