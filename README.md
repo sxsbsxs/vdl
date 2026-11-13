@@ -78,7 +78,7 @@ Issue 评论（返回标题、格式和源站直链）
 解析工作流需要仓库允许 Actions 运行，并允许工作流使用内置令牌写入 Issue 评论：
 
 1. 打开仓库 **Settings → Actions → General**。
-2. 在 **Workflow permissions** 中允许工作流访问仓库；解析工作流在 YAML 中单独声明了 `issues: write`。
+2. 在 **Workflow permissions** 中选择 **Read and write permissions**，以允许工作流使用内置令牌发布 Issue 评论；解析工作流在 YAML 中仅申请 `contents: read` 和 `issues: write`。
 3. 确认 Actions 没有被仓库设置禁用。
 
 如果工作流运行失败，请打开仓库 **Actions**，进入对应的 VideoDL GitHub issue parser 运行记录查看日志。
