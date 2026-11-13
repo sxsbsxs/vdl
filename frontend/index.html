@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f7fb">
+  <meta name="description" content="VideoDL：粘贴视频链接，解析可用格式并获取源站下载直链。">
+  <title>VideoDL · 在线视频解析</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="VideoDL 首页">
+      <span class="brand-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.8h14a1.7 1.7 0 0 1 1.7 1.7v11a1.7 1.7 0 0 1-1.7 1.7H5a1.7 1.7 0 0 1-1.7-1.7v-11A1.7 1.7 0 0 1 5 4.8Z"/><path d="m10 8.4 5.7 3.6-5.7 3.6V8.4Z"/></svg></span>
+      <span>Video<span class="brand-accent">DL</span></span>
+    </a>
+    <div class="top-meta"><span class="status-dot"></span> 在线解析服务</div>
+  </header>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow"><span class="eyebrow-line"></span> SIMPLE VIDEO LINK PARSER</div>
+      <h1>视频链接，<span>一贴即解析。</span></h1>
+      <p class="hero-copy">粘贴视频页面地址，获取视频信息、可用格式和源站直链。</p>
+      <form id="resolve-form" class="url-card">
+        <label class="input-label" for="video-url">视频链接</label>
+        <div class="input-row">
+          <span class="link-icon" aria-hidden="true">↗</span>
+          <input id="video-url" name="url" type="url" inputmode="url" autocomplete="url"
+                 placeholder="粘贴 YouTube、Bilibili 等视频链接" required maxlength="2048">
+          <button id="paste-button" class="paste-button" type="button">粘贴</button>
+        </div>
+        <div class="form-footer">
+          <span class="input-hint">支持单个公开视频链接 · 暂不支持播放列表</span>
+          <button id="resolve-button" class="primary-button" type="submit">
+            <span class="button-icon">⌕</span><span id="button-label">解析视频</span>
+          </button>
+        </div>
+      </form>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div class="privacy-note"><span>✓</span> 服务器只解析信息，不中转或保存完整视频文件</div>
+    </section>
+    <section id="result" class="result-section" hidden>
+      <div class="section-heading">
+        <div><div class="section-kicker">ANALYSIS RESULT</div><h2>解析结果</h2></div>
+        <button id="clear-button" class="text-button" type="button">清除结果</button>
+      </div>
+      <article class="video-card">
+        <div class="thumbnail-wrap">
+          <img id="video-thumbnail" alt="视频封面" loading="lazy">
+          <span id="video-duration" class="duration-chip"></span>
+        </div>
+        <div class="video-info">
+          <div class="source-tag" id="video-source">VIDEO</div>
+          <h3 id="video-title"></h3>
+          <p id="video-uploader" class="video-uploader"></p>
+          <a id="source-link" class="source-link" target="_blank" rel="noopener noreferrer">打开原视频 ↗</a>
+        </div>
+      </article>
+      <div class="formats-heading">
+        <div><div class="section-kicker">AVAILABLE STREAMS</div><h2>可用下载格式</h2></div>
+        <span id="format-count" class="count-chip">0 个格式</span>
+      </div>
+      <div class="format-explainer">直链来自视频源站。部分网站要求 Referer、登录或专用下载器；浏览器能否直接保存取决于源站规则。</div>
+      <div id="format-list" class="format-list"></div>
+    </section>
+    <section class="features">
+      <div class="feature"><span class="feature-icon">↗</span><div><b>源站直链</b><small>不经本站中转视频文件</small></div></div>
+      <div class="feature"><span class="feature-icon">▤</span><div><b>格式信息</b><small>查看分辨率、编码与大小</small></div></div>
+      <div class="feature"><span class="feature-icon">⌁</span><div><b>多站点解析</b><small>由 yt-dlp 提供解析能力</small></div></div>
+    </section>
+    <footer class="footer">
+      <div class="footer-brand">VideoDL <span>·</span> Open Source</div>
+      <p>仅用于获取你有权访问和下载的内容。请遵守来源网站的服务条款与当地法律。</p>
+      <p class="footer-small">解析结果可能因地区、登录状态、源站策略或 yt-dlp 版本而变化。</p>
+    </footer>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
