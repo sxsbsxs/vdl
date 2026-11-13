@@ -1,119 +1,96 @@
 # VideoDL
 
-VideoDL 是一个开源在线视频链接解析网站。项目采用 **HTML/CSS/JavaScript 前端 + C++17 API + yt-dlp 解析引擎**。服务只解析视频信息并向浏览器返回源站媒体直链，不在 VideoDL 服务器上保存或中转完整视频文件。
+VideoDL 是一个完全基于 GitHub 的开源在线视频链接解析工具。网站由 **GitHub Pages** 托管，解析任务由 **GitHub Actions + yt-dlp** 执行，不需要购买服务器、租用 VPS 或接入第三方后端平台。
 
-## 功能
+## 在线使用
 
-- 粘贴视频页面链接并解析标题、封面、时长和上传者。
-- 展示源站提供的 HTTP/HTTPS 直连格式、分辨率、编码和文件大小。
-- 复制直链或在新标签页打开源站地址。
-- C++ API 使用参数数组启动 yt-dlp，不通过 shell 拼接用户输入。
-- 内置站点域名白名单、单 IP 简单速率限制、单任务超时和输出大小上限。
-- Docker 一键构建；Render Blueprint 可从 GitHub 自动部署。
-- GitHub Actions 在 push / pull request 时构建 Docker 镜像。
+网站：<https://sxsbsxs.github.io/vdl/>
+
+1. 打开网站，粘贴公开视频页面链接。
+2. 点击“解析视频”，页面会打开 GitHub 的新 Issue 页面。
+3. 登录 GitHub，确认视频链接后创建 Issue。
+4. GitHub Actions 会自动启动 yt-dlp 解析任务。
+5. 解析完成后，结果会作为评论出现在该 Issue 下。
+
+**重要：** 使用者必须登录 GitHub 才能提交请求。Issue、视频页面链接和解析结果都是公开的，任何人都能查看。请勿提交私人视频、Cookie、访问令牌或其他敏感链接。
+
+## 工作原理
+
+```text
+手机/电脑浏览器
+      |
+      v
+GitHub Pages（静态网站）
+      |
+      v
+GitHub Issues（提交视频链接）
+      |
+      v
+GitHub Actions（临时运行环境）
+      |
+      v
+yt-dlp + Deno（解析）
+      |
+      v
+Issue 评论（返回标题、格式和源站直链）
+      |
+      v
+用户浏览器直接访问源站媒体
+```
+
+- GitHub Pages 只负责展示前端。
+- GitHub Actions 按需运行解析任务，不是常驻 API 服务，因此任务可能需要排队，不保证实时返回。
+- VideoDL 不在 GitHub Actions 中下载、保存或中转完整视频文件，只返回 yt-dlp 提供的源站 HTTP/HTTPS 直链。
+- 前端不包含 GitHub Token 或其他密钥。
+- 解析结果评论公开可见，部分直链可能带有临时签名或访问参数。
 
 ## 技术栈
 
-- C++17、cpp-httplib 0.27.0、nlohmann/json
-- yt-dlp（Python 包，安装 default extras）
-- Deno（为 YouTube 的 JavaScript challenge 解析提供运行时）
 - HTML、CSS、原生 JavaScript
-- Docker、Render、GitHub Actions
+- GitHub Pages
+- GitHub Issues
+- GitHub Actions
+- Python、yt-dlp（default extras）、Deno
+- C++17 后端源码仍保留在 `backend/`，可用于未来自行部署常驻 API；当前在线网站不依赖该后端。
 
-## 本地运行（Ubuntu / Debian）
+## 支持站点
 
-需要 CMake、C++ 编译器、Git、Python 3、Deno 和 `nlohmann-json3-dev`。
+当前工作流只接受以下站点域名，且实际解析能力取决于 yt-dlp 上游支持情况：
 
-安装依赖并创建 yt-dlp 环境：
+- YouTube、Bilibili
+- TikTok、抖音
+- Vimeo、X / Twitter
+- Instagram、Facebook、Twitch
+- Dailymotion、Reddit、SoundCloud
+- Niconico、微博、AcFun、西瓜视频
+- 优酷、爱奇艺
 
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake git nlohmann-json3-dev python3 python3-venv
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -U "yt-dlp[default]"
-```
+## 项目文件
 
-安装 Deno：参阅 <https://docs.deno.com/runtime/getting_started/installation/>。
+- `frontend/`：GitHub Pages 网站。
+- `.github/workflows/pages.yml`：自动发布静态网站。
+- `.github/workflows/resolve-issue.yml`：监听 VideoDL Issue，运行 yt-dlp 并回写解析结果。
+- `.github/ISSUE_TEMPLATE/videodl-request.md`：解析请求模板。
+- `backend/`、`Dockerfile`、`CMakeLists.txt`：可选的 C++ 常驻 API 后端源码。
 
-编译运行：
+## GitHub Actions 设置
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel 2
-YTDLP_BIN="$PWD/.venv/bin/yt-dlp" PORT=10000 ./build/vdl-server
-```
+解析工作流需要仓库允许 Actions 运行，并允许工作流使用内置令牌写入 Issue 评论：
 
-浏览器打开 <http://localhost:10000>。健康检查：<http://localhost:10000/api/health>。
+1. 打开仓库 **Settings → Actions → General**。
+2. 在 **Workflow permissions** 中允许工作流访问仓库；解析工作流在 YAML 中单独声明了 `issues: write`。
+3. 确认 Actions 没有被仓库设置禁用。
 
-## Docker 部署
+如果工作流运行失败，请打开仓库 **Actions**，进入对应的 VideoDL GitHub issue parser 运行记录查看日志。
 
-```bash
-docker build -t videodl .
-docker run --rm -p 10000:10000 -e PORT=10000 videodl
-```
+## 当前限制与安全说明
 
-浏览器打开 <http://localhost:10000>。
-
-## GitHub Pages 静态网站部署
-
-本仓库包含一个 Pages 工作流，会将 `frontend/` 目录发布为 GitHub Pages 项目站点：
-
-1. 打开仓库的 **Settings → Pages**。
-2. 在 **Build and deployment → Source** 中选择 **GitHub Actions**。
-3. 保存后，打开 **Actions** 标签页，查看 **Deploy VideoDL website to GitHub Pages** 工作流。
-4. 工作流成功后，网站地址为 <https://sxsbsxs.github.io/vdl/>。
-5. 之后更新 `frontend/` 目录并推送到 `main`，会自动重新发布。
-
-GitHub Pages 只托管静态前端。要启用视频解析，先把 C++/yt-dlp API 部署到一个支持 Docker 的后端平台，再编辑 `frontend/config.js`，设置：
-
-```js
-window.VIDEODL_API_BASE = "https://你的后端域名";
-```
-
-配置后提交，Pages 会再次自动发布。后端必须允许 GitHub Pages 域名的跨域请求（当前 VideoDL API 已允许跨域请求）。如果尚未填写 API 地址，网页会明确提示“解析 API 还没有连接”，不会把静态页面误报为解析成功。
-
-## Render 免费部署（无需主动添加银行卡）
-
-1. 将本仓库推送到 GitHub，并确保仓库为 Public 或 Render 账号有权限访问。
-2. 登录 <https://dashboard.render.com/>，使用 GitHub 登录或连接 GitHub。
-3. 选择 **New → Blueprint**，选择 `sxsbsxs/vdl` 仓库。
-4. Render 读取根目录的 `render.yaml`，确认创建名为 `videodl` 的 Web Service。
-5. 选择 Free 方案并部署。首次 Docker 构建需要一段时间。
-6. 部署成功后打开 Render 分配的 `https://...onrender.com` 地址。
-
-后续向 GitHub 的 `main` 分支提交代码会自动触发 Render 部署。
-
-**免费服务限制：** Render 免费 Web Service 空闲 15 分钟后会休眠；下一次请求会唤醒，通常约需一分钟。免费实例可能重启，文件系统不持久化，且有 CPU、内存、构建时间和出站流量限制。它适合原型和低流量测试，不是 24 小时生产 VPS。请查看 <https://render.com/docs/free> 和 <https://render.com/docs/outbound-bandwidth> 的最新规则。
-
-## API
-
-### 健康检查
-
-```http
-GET /api/health
-```
-
-### 解析视频
-
-```http
-POST /api/resolve
-Content-Type: application/json
-
-{"url":"https://www.youtube.com/watch?v=..."}
-```
-
-成功时返回视频元数据和直链格式。失败时返回 `{"error":"..."}`。
-
-## 当前限制
-
-- 当前版本只允许一组常见视频站点域名，域名白名单在 `backend/main.cpp` 的 `allowed` 数组中维护；并不意味着 yt-dlp 上游列出的每个站点都已开放。
-- 每次只解析一个视频，不处理播放列表。
-- 不提供登录 Cookie 上传，不解析需要账号授权的私人内容。
-- 仅展示源站提供的 HTTP/HTTPS 直连格式。部分网站采用 DASH 分离音视频、HLS、临时签名 URL、Referer 校验或防盗链，浏览器可能无法直接保存；本版本不会在服务器上下载、合并或转码这些媒体。
-- YouTube 完整解析需要 yt-dlp 的 EJS 组件与兼容 JavaScript 运行时；Docker 镜像安装 `yt-dlp[default]` 与 Deno。参阅 <https://github.com/yt-dlp/yt-dlp/wiki/EJS>。
-- 站点策略、地区限制和 yt-dlp 更新都可能影响解析结果。yt-dlp 官方也说明，支持站点会变化，列表并不保证每个站点始终可用：<https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md>。
-- 公开服务的速率限制是轻量保护，不等同于完整的反滥用系统。上线前请继续添加缓存、队列、监控和更严格的访问控制。
+- 这是 GitHub 驱动的异步解析工具，不是实时 API。Actions 可能排队、失败或受到 GitHub 使用限制。
+- 提交者需要 GitHub 账号；匿名访客不能直接创建 Issue。
+- Issue 和评论公开可见，源视频 URL 与直链可能包含临时访问参数。不要提交私人或敏感链接。
+- 仅允许工作流中列出的站点域名。不要将该工作流视为通用 URL 抓取器。
+- 仅展示可识别的 HTTP/HTTPS 直链。部分网站使用分离音视频、HLS/DASH、Referer 校验或防盗链，可能无法通过普通浏览器直接下载。
+- yt-dlp 支持站点和解析结果会随源站策略及上游版本变化。
 - 请只下载你拥有权利或获得许可的内容，并遵守来源网站条款及当地法律。
 
 ## 许可证
