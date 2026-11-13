@@ -71,7 +71,8 @@ jobs:
               print("::error::解析超时，请稍后重新提交。")
               sys.exit(1)
           except subprocess.CalledProcessError as exc:
-              detail = (exc.stderr or "yt-dlp 无法解析此视频。")[-1200:]
+              print("::error::yt-dlp 无法解析此视频。请检查链接、地区限制或登录要求。")
+              sys.exit(1)
               print("::error::" + detail.replace("\n", " "))
               sys.exit(1)
           except Exception as exc:
