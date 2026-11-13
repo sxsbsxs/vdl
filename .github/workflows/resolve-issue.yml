@@ -38,7 +38,7 @@ jobs:
           from urllib.parse import urlparse
 
           body = os.environ.get("ISSUE_BODY", "")
-          match = re.search(r"视频链接：\\s*(https?://[^\\s<>]+)", body, re.I)
+          match = re.search(r"视频链接：\s*(https?://[^\s<>]+)", body, re.I)
           if not match:
               print("::error::Issue body has no valid video URL")
               sys.exit(1)
