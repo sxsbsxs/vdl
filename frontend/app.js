@@ -1,6 +1,3 @@
-const API_BASE = String(window.VIDEODL_API_BASE || "").trim().replace(/\/+$/, "");
-const IS_GITHUB_PAGES = window.location.hostname.endsWith("github.io");
-
 const form = document.getElementById("resolve-form");
 const input = document.getElementById("video-url");
 const resolveButton = document.getElementById("resolve-button");
