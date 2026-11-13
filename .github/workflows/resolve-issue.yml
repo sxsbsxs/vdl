@@ -53,7 +53,7 @@ jobs:
               "nicovideo.jp", "weibo.com", "acfun.cn", "ixigua.com",
               "youku.com", "iqiyi.com"
           )
-          if not host or not any(host == d or host.endswith("." + d) for d in allowed):
+          if (urlparse(url).scheme not in ("http", "https") or urlparse(url).username or\n              urlparse(url).password or not host or\n              not any(host == d or host.endswith("." + d) for d in allowed)):
               print("::error::Unsupported video host")
               sys.exit(1)
 
@@ -73,7 +73,7 @@ jobs:
               print("::error::" + detail.replace("\\n", " "))
               sys.exit(1)
           except Exception as exc:
-              print("::error::解析失败：" + str(exc)[:500])
+              print("::error::解析失败。请稍后重试并检查 Actions 日志。")
               sys.exit(1)
 
           def esc(value):
