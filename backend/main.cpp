@@ -1,40 +1,44 @@
-#include <httplib.h>
-#include <nlohmann/json.hpp>
+#include "httplib.h"
+#include "json.hpp"
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
-#include <cctype>
+#include <atomic>
 #include <chrono>
+#include <cctype>
+#include <cerrno>
 #include <csignal>
 #include <cstdlib>
-#include <cstring>
-#include <fcntl.h>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <memory>
 #include <mutex>
 #include <poll.h>
-#include <spawn.h>
+#include <regex>
 #include <string>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <unordered_map>
+#include <fcntl.h>
 #include <unistd.h>
+#include <unordered_map>
 #include <vector>
 
 using json = nlohmann::json;
-extern char **environ;
+namespace fs = std::filesystem;
 
 namespace {
-constexpr std::size_t kMaxInputBytes = 16 * 1024;
-constexpr std::size_t kMaxOutputBytes = 6 * 1024 * 1024;
-constexpr int kProcessTimeoutSeconds = 48;
-constexpr int kRateLimitPerMinute = 5;
+constexpr const char* YT_DLP = "/usr/local/bin/yt-dlp";
+constexpr std::size_t MAX_JSON_BYTES = 16 * 1024 * 1024;
+constexpr std::size_t MAX_DOWNLOAD_BYTES = 7ULL * 1024 * 1024 * 1024;
+constexpr int RESOLVE_TIMEOUT_SECONDS = 75;
+constexpr int DOWNLOAD_TIMEOUT_SECONDS = 900;
 
 struct ProcessResult {
-    std::string output;
-    std::string error;
     int exit_code = -1;
     bool timed_out = false;
     bool output_too_large = false;
+    std::string output;
 };
 
 std::string lower(std::string value) {
@@ -43,390 +47,426 @@ std::string lower(std::string value) {
     return value;
 }
 
-std::string trim(std::string value) {
-    const auto first = value.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) return {};
-    const auto last = value.find_last_not_of(" \t\r\n");
-    return value.substr(first, last - first + 1);
-}
+bool is_supported_url(const std::string& url) {
+    if (url.empty() || url.size() > 4096 || url.find('@') != std::string::npos ||
+        url.find('\\') != std::string::npos) return false;
 
-bool ends_with_domain(const std::string &host, const std::string &domain) {
-    return host == domain ||
-           (host.size() > domain.size() &&
-            host.compare(host.size() - domain.size(), domain.size(), domain) == 0 &&
-            host[host.size() - domain.size() - 1] == '.');
-}
+    static const std::regex pattern(R"(^(https?)://([A-Za-z0-9.-]+)(?::[0-9]+)?(?:[/\?#]|$))",
+                                    std::regex::icase);
+    std::smatch match;
+    if (!std::regex_search(url, match, pattern)) return false;
 
-std::string get_allowed_host(const std::string &url) {
-    const auto scheme_end = url.find("://");
-    if (scheme_end == std::string::npos) return {};
-    const std::string scheme = lower(url.substr(0, scheme_end));
-    if (scheme != "https" && scheme != "http") return {};
+    const std::string scheme = lower(match[1].str());
+    if (scheme != "http" && scheme != "https") return false;
 
-    const std::size_t authority_start = scheme_end + 3;
-    const auto authority_end = url.find_first_of("/?#", authority_start);
-    std::string authority = url.substr(
-        authority_start,
-        authority_end == std::string::npos ? std::string::npos : authority_end - authority_start
-    );
-    if (authority.empty() || authority.find('@') != std::string::npos ||
-        authority.find_first_of(" \t\r\n") != std::string::npos) return {};
+    std::string host = lower(match[2].str());
+    if (host.empty() || host.front() == '.' || host.back() == '.' ||
+        host.find("..") != std::string::npos || host.find('.') == std::string::npos) return false;
 
-    std::string host = authority;
-    const auto colon = authority.rfind(':');
-    if (colon != std::string::npos) {
-        if (authority.find(':') != colon) return {};
-        const std::string port = authority.substr(colon + 1);
-        if ((scheme == "https" && port != "443") ||
-            (scheme == "http" && port != "80")) return {};
-        host = authority.substr(0, colon);
-    }
-    host = lower(host);
-    if (!host.empty() && host.back() == '.') host.pop_back();
-
-    static const std::array<const char *, 24> allowed = {
+    // Allow only known video providers. This is deliberately not an open URL proxy.
+    static const std::vector<std::string> allowed = {
         "youtube.com", "youtu.be", "youtube-nocookie.com",
         "bilibili.com", "bilibili.tv", "b23.tv",
         "tiktok.com", "douyin.com", "vimeo.com",
-        "twitter.com", "x.com", "instagram.com",
-        "facebook.com", "fb.watch", "twitch.tv",
-        "dailymotion.com", "reddit.com", "soundcloud.com",
-        "nicovideo.jp", "weibo.com", "acfun.cn",
-        "ixigua.com", "youku.com", "iqiyi.com"
+        "twitter.com", "x.com", "instagram.com", "facebook.com", "fb.watch",
+        "twitch.tv", "dailymotion.com", "reddit.com", "soundcloud.com",
+        "nicovideo.jp", "weibo.com", "acfun.cn", "ixigua.com",
+        "youku.com", "iqiyi.com"
     };
-    for (const char *domain : allowed) {
-        if (ends_with_domain(host, domain)) return host;
+
+    for (const auto& domain : allowed) {
+        if (host == domain ||
+            (host.size() > domain.size() &&
+             host.compare(host.size() - domain.size(), domain.size(), domain) == 0 &&
+             host[host.size() - domain.size() - 1] == '.')) return true;
     }
-    return {};
+    return false;
 }
 
-bool is_http_url(const std::string &url) {
-    return url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
-}
+ProcessResult run_process(const std::vector<std::string>& args,
+                          int timeout_seconds,
+                          std::size_t output_limit = MAX_JSON_BYTES) {
+    ProcessResult result;
+    if (args.empty()) return result;
 
-std::string client_ip(const httplib::Request &req) {
-    // Render's trusted edge proxy appends the connecting client address to this chain.
-    std::string forwarded = req.get_header_value("X-Forwarded-For");
-    if (!forwarded.empty()) {
-        const auto comma = forwarded.rfind(',');
-        if (comma != std::string::npos) forwarded = forwarded.substr(comma + 1);
-        forwarded = trim(forwarded);
-        if (!forwarded.empty()) return forwarded;
-    }
-    return req.remote_addr.empty() ? "unknown" : req.remote_addr;
-}
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return result;
 
-bool allow_request(const std::string &ip) {
-    using Clock = std::chrono::steady_clock;
-    static std::mutex mutex;
-    static std::unordered_map<std::string, std::pair<Clock::time_point, int>> visits;
-    std::lock_guard<std::mutex> lock(mutex);
-    const auto now = Clock::now();
-    auto &entry = visits[ip];
-    if (entry.second == 0 || now - entry.first >= std::chrono::minutes(1)) {
-        entry = {now, 0};
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (const auto& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
+    argv.push_back(nullptr);
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return result;
     }
-    if (entry.second >= kRateLimitPerMinute) return false;
-    ++entry.second;
-    if (visits.size() > 2048) {
-        for (auto it = visits.begin(); it != visits.end();) {
-            if (now - it->second.first >= std::chrono::minutes(2)) it = visits.erase(it);
-            else ++it;
+
+    if (pid == 0) {
+        dup2(pipefd[1], STDOUT_FILENO);
+        const int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) dup2(devnull, STDERR_FILENO);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        if (devnull >= 0) close(devnull);
+        execv(YT_DLP, argv.data());
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+    const int old_flags = fcntl(pipefd[0], F_GETFL, 0);
+    fcntl(pipefd[0], F_SETFL, old_flags | O_NONBLOCK);
+
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::seconds(timeout_seconds);
+    bool pipe_closed = false;
+    bool child_finished = false;
+    int status = 0;
+
+    while (!pipe_closed || !child_finished) {
+        if (std::chrono::steady_clock::now() >= deadline && !child_finished) {
+            result.timed_out = true;
+            kill(pid, SIGKILL);
         }
+
+        pollfd pfd{pipefd[0], static_cast<short>(POLLIN | POLLHUP), 0};
+        poll(&pfd, 1, 100);
+
+        if (!pipe_closed && (pfd.revents & (POLLIN | POLLHUP))) {
+            std::array<char, 65536> buffer{};
+            for (;;) {
+                const ssize_t count = read(pipefd[0], buffer.data(), buffer.size());
+                if (count > 0) {
+                    if (result.output.size() + static_cast<std::size_t>(count) > output_limit) {
+                        result.output_too_large = true;
+                        kill(pid, SIGKILL);
+                        pipe_closed = true;
+                        break;
+                    }
+                    result.output.append(buffer.data(), static_cast<std::size_t>(count));
+                } else if (count == 0) {
+                    pipe_closed = true;
+                    break;
+                } else {
+                    if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) pipe_closed = true;
+                    break;
+                }
+            }
+        }
+
+        if (!child_finished) {
+            const pid_t waited = waitpid(pid, &status, WNOHANG);
+            if (waited == pid) child_finished = true;
+        }
+
+        if (child_finished && !pipe_closed) {
+            // Drain remaining bytes after the child exits.
+            std::array<char, 65536> buffer{};
+            for (;;) {
+                const ssize_t count = read(pipefd[0], buffer.data(), buffer.size());
+                if (count > 0) {
+                    if (result.output.size() + static_cast<std::size_t>(count) <= output_limit)
+                        result.output.append(buffer.data(), static_cast<std::size_t>(count));
+                    else
+                        result.output_too_large = true;
+                } else {
+                    if (count == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
+                        pipe_closed = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    close(pipefd[0]);
+    if (result.timed_out || result.output_too_large) {
+        if (!child_finished) {
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+        }
+    }
+    if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) result.exit_code = 128 + WTERMSIG(status);
+    return result;
+}
+
+std::string string_value(const json& obj, const char* key, const std::string& fallback = "") {
+    if (!obj.is_object()) return fallback;
+    auto it = obj.find(key);
+    if (it == obj.end() || it->is_null()) return fallback;
+    if (it->is_string()) return it->get<std::string>();
+    return fallback;
+}
+
+long long number_value(const json& obj, const char* key, long long fallback = 0) {
+    if (!obj.is_object()) return fallback;
+    auto it = obj.find(key);
+    if (it == obj.end() || it->is_null() || !it->is_number()) return fallback;
+    return it->get<long long>();
+}
+
+json error_json(const std::string& message) {
+    return json{{"error", message}};
+}
+
+std::mutex rate_mutex;
+struct RateEntry {
+    std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
+    int count = 0;
+};
+std::unordered_map<std::string, RateEntry> rate_entries;
+
+bool rate_allowed(const httplib::Request& req, httplib::Response& res, int limit) {
+    std::string ip = req.get_header_value("X-Forwarded-For");
+    if (ip.empty()) ip = "unknown";
+    const auto now = std::chrono::steady_clock::now();
+
+    std::lock_guard<std::mutex> lock(rate_mutex);
+    auto& entry = rate_entries[ip];
+    if (now - entry.window >= std::chrono::minutes(1)) {
+        entry.window = now;
+        entry.count = 0;
+    }
+    if (++entry.count > limit) {
+        res.status = 429;
+        res.set_content(error_json("请求太频繁，请一分钟后再试。").dump(), "application/json; charset=utf-8");
+        return false;
     }
     return true;
 }
 
-void set_json(httplib::Response &res, int status, const json &body) {
-    res.status = status;
-    res.set_content(body.dump(), "application/json; charset=utf-8");
+std::string format_size(long long bytes) {
+    if (bytes <= 0) return "大小未知";
+    const double mib = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    if (mib >= 1024.0) return std::to_string(static_cast<int>(mib / 1024.0 * 10.0) / 10.0) + " GB";
+    return std::to_string(static_cast<int>(mib * 10.0) / 10.0) + " MB";
 }
 
-void append_from_fd(int &fd, std::string &target, std::size_t limit,
-                    bool &too_large, pid_t pid) {
-    if (fd < 0) return;
-    std::array<char, 8192> buffer{};
-    while (true) {
-        const ssize_t count = ::read(fd, buffer.data(), buffer.size());
-        if (count > 0) {
-            target.append(buffer.data(), static_cast<std::size_t>(count));
-            if (target.size() > limit) {
-                too_large = true;
-                ::kill(pid, SIGKILL);
-                return;
+bool parse_video(const std::string& url, json& response, std::string& error, int& status_code) {
+    const auto proc = run_process({
+        YT_DLP, "--dump-single-json", "--no-warnings", "--no-playlist",
+        "--skip-download", "--no-progress", "--no-color", "--no-cache-dir",
+        "--socket-timeout", "20", "--retries", "1",
+        "--js-runtimes", "deno", "--remote-components", "ejs:github", url
+    }, RESOLVE_TIMEOUT_SECONDS);
+
+    if (proc.timed_out) {
+        error = "解析超时，请检查视频链接后重试。";
+        status_code = 504;
+        return false;
+    }
+    if (proc.output_too_large) {
+        error = "解析结果过大，暂时无法处理。";
+        status_code = 502;
+        return false;
+    }
+    if (proc.exit_code != 0 || proc.output.empty()) {
+        error = "解析失败。视频可能需要登录、受地区限制，或源站暂不支持。";
+        status_code = 422;
+        return false;
+    }
+
+    try {
+        const json info = json::parse(proc.output);
+        json formats = json::array();
+
+        if (info.contains("formats") && info["formats"].is_array()) {
+            for (const auto& f : info["formats"]) {
+                if (!f.is_object()) continue;
+                const std::string direct_url = string_value(f, "url");
+                const std::string protocol = string_value(f, "protocol");
+                if (direct_url.rfind("http://", 0) != 0 && direct_url.rfind("https://", 0) != 0) continue;
+                if (protocol != "http" && protocol != "https") continue;
+
+                json item;
+                item["format_id"] = string_value(f, "format_id");
+                item["ext"] = string_value(f, "ext", "media");
+                item["format_note"] = string_value(f, "format_note");
+                item["height"] = number_value(f, "height");
+                item["fps"] = number_value(f, "fps");
+                item["filesize"] = number_value(f, "filesize", number_value(f, "filesize_approx"));
+                item["vcodec"] = string_value(f, "vcodec");
+                item["acodec"] = string_value(f, "acodec");
+                formats.push_back(std::move(item));
+                if (formats.size() >= 30) break;
             }
-        } else if (count == 0) {
-            ::close(fd);
-            fd = -1;
-            return;
-        } else {
-            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return;
-            ::close(fd);
-            fd = -1;
-            return;
         }
-    }
-}
 
-ProcessResult run_ytdlp(const std::string &url) {
-    ProcessResult result;
-    int out_pipe[2] = {-1, -1};
-    int err_pipe[2] = {-1, -1};
-    if (::pipe(out_pipe) != 0 || ::pipe(err_pipe) != 0) {
-        if (out_pipe[0] >= 0) { ::close(out_pipe[0]); ::close(out_pipe[1]); }
-        if (err_pipe[0] >= 0) { ::close(err_pipe[0]); ::close(err_pipe[1]); }
-        result.error = "Could not create process pipes.";
-        return result;
-    }
-
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, out_pipe[1], STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, err_pipe[1], STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&actions, out_pipe[0]);
-    posix_spawn_file_actions_addclose(&actions, err_pipe[0]);
-    posix_spawn_file_actions_addclose(&actions, out_pipe[1]);
-    posix_spawn_file_actions_addclose(&actions, err_pipe[1]);
-
-    const char *configured_bin = std::getenv("YTDLP_BIN");
-    const std::string binary = configured_bin && *configured_bin ? configured_bin : "yt-dlp";
-    std::vector<std::string> args = {
-        binary, "--no-config", "--no-cache-dir", "--no-warnings", "--no-progress",
-        "--no-playlist", "--skip-download", "--dump-single-json",
-        "--socket-timeout", "12", "--retries", "1", "--fragment-retries", "1", url
-    };
-    std::vector<char *> argv;
-    argv.reserve(args.size() + 1);
-    for (auto &arg : args) argv.push_back(const_cast<char *>(arg.c_str()));
-    argv.push_back(nullptr);
-
-    pid_t pid = -1;
-    const int spawn_status = ::posix_spawnp(
-        &pid, binary.c_str(), &actions, nullptr, argv.data(), environ
-    );
-    posix_spawn_file_actions_destroy(&actions);
-    ::close(out_pipe[1]);
-    ::close(err_pipe[1]);
-    if (spawn_status != 0) {
-        ::close(out_pipe[0]);
-        ::close(err_pipe[0]);
-        result.error = "Could not start yt-dlp: " + std::string(std::strerror(spawn_status));
-        return result;
-    }
-
-    int out_fd = out_pipe[0];
-    int err_fd = err_pipe[0];
-    ::fcntl(out_fd, F_SETFL, ::fcntl(out_fd, F_GETFL) | O_NONBLOCK);
-    ::fcntl(err_fd, F_SETFL, ::fcntl(err_fd, F_GETFL) | O_NONBLOCK);
-    bool child_exited = false;
-    int child_status = 0;
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::seconds(kProcessTimeoutSeconds);
-
-    while (out_fd >= 0 || err_fd >= 0 || !child_exited) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-            result.timed_out = true;
-            ::kill(pid, SIGKILL);
-        }
-        pollfd descriptors[2] = {
-            {out_fd, static_cast<short>(POLLIN | POLLHUP | POLLERR), 0},
-            {err_fd, static_cast<short>(POLLIN | POLLHUP | POLLERR), 0}
+        response = {
+            {"id", string_value(info, "id")},
+            {"title", string_value(info, "title", "未命名视频")},
+            {"uploader", string_value(info, "uploader", string_value(info, "channel", "未知作者"))},
+            {"thumbnail", string_value(info, "thumbnail")},
+            {"duration", number_value(info, "duration")},
+            {"webpage_url", string_value(info, "webpage_url", url)},
+            {"extractor", string_value(info, "extractor")},
+            {"formats", formats}
         };
-        ::poll(descriptors, 2, 100);
-        if (out_fd >= 0 && descriptors[0].revents) {
-            append_from_fd(out_fd, result.output, kMaxOutputBytes,
-                           result.output_too_large, pid);
-        }
-        if (err_fd >= 0 && descriptors[1].revents) {
-            bool ignored_limit = false;
-            append_from_fd(err_fd, result.error, 32 * 1024, ignored_limit, pid);
-        }
-        if (!child_exited && ::waitpid(pid, &child_status, WNOHANG) == pid) {
-            child_exited = true;
-        }
-        if (result.timed_out || result.output_too_large) {
-            if (!child_exited) {
-                ::kill(pid, SIGKILL);
-                ::waitpid(pid, &child_status, 0);
-                child_exited = true;
-            }
-            if (out_fd >= 0) { ::close(out_fd); out_fd = -1; }
-            if (err_fd >= 0) { ::close(err_fd); err_fd = -1; }
-            break;
-        }
+        return true;
+    } catch (...) {
+        error = "视频站点返回了无法识别的数据，请稍后重试。";
+        status_code = 502;
+        return false;
     }
-    if (!child_exited) ::waitpid(pid, &child_status, 0);
-    if (WIFEXITED(child_status)) result.exit_code = WEXITSTATUS(child_status);
-    else if (WIFSIGNALED(child_status)) result.exit_code = 128 + WTERMSIG(child_status);
-    return result;
 }
 
-std::string json_string(const json &object, const char *key,
-                        const std::string &fallback = "") {
-    if (!object.is_object() || !object.contains(key) || object[key].is_null()) return fallback;
-    if (object[key].is_string()) return object[key].get<std::string>();
-    return fallback;
-}
-
-json nullable_number(const json &object, const char *key) {
-    if (object.is_object() && object.contains(key) && object[key].is_number()) return object[key];
-    return nullptr;
-}
-
-json filter_info(const json &info, const std::string &source_url) {
-    json result;
-    result["id"] = json_string(info, "id");
-    result["title"] = json_string(info, "title", "Untitled video");
-    result["webpage_url"] = json_string(info, "webpage_url", source_url);
-    result["thumbnail"] = json_string(info, "thumbnail");
-    result["duration"] = nullable_number(info, "duration");
-    result["uploader"] = json_string(info, "uploader");
-    result["extractor"] = json_string(info, "extractor_key", json_string(info, "extractor"));
-    result["formats"] = json::array();
-
-    const json formats = info.value("formats", json::array());
-    for (const auto &format : formats) {
-        if (!format.is_object()) continue;
-        const std::string media_url = json_string(format, "url");
-        if (!is_http_url(media_url)) continue;
-        const std::string protocol = json_string(format, "protocol");
-        if (protocol != "http" && protocol != "https") continue;
-
-        json item;
-        item["format_id"] = json_string(format, "format_id");
-        item["ext"] = json_string(format, "ext");
-        item["format_note"] = json_string(format, "format_note");
-        item["width"] = nullable_number(format, "width");
-        item["height"] = nullable_number(format, "height");
-        item["fps"] = nullable_number(format, "fps");
-        item["filesize"] = nullable_number(format, "filesize");
-        if (item["filesize"].is_null()) item["filesize"] = nullable_number(format, "filesize_approx");
-        item["vcodec"] = json_string(format, "vcodec");
-        item["acodec"] = json_string(format, "acodec");
-        item["has_video"] = !item["vcodec"].get<std::string>().empty() && item["vcodec"] != "none";
-        item["has_audio"] = !item["acodec"].get<std::string>().empty() && item["acodec"] != "none";
-        item["url"] = media_url;
-        result["formats"].push_back(std::move(item));
-        if (result["formats"].size() >= 100) break;
+std::string ascii_filename(const fs::path& path) {
+    std::string ext = path.extension().string();
+    if (ext.empty() || ext.size() > 12) ext = ".mp4";
+    for (char& c : ext) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.') c = '_';
     }
-
-    std::sort(result["formats"].begin(), result["formats"].end(),
-              [](const json &a, const json &b) {
-        const int ah = a.contains("height") && a["height"].is_number() ? a["height"].get<int>() : 0;
-        const int bh = b.contains("height") && b["height"].is_number() ? b["height"].get<int>() : 0;
-        if (ah != bh) return ah > bh;
-        if (a.value("has_audio", false) != b.value("has_audio", false)) {
-            return a.value("has_audio", false);
-        }
-        return a.value("format_id", "") < b.value("format_id", "");
-    });
-    return result;
+    return "VideoDL" + ext;
 }
 } // namespace
 
 int main() {
     httplib::Server server;
-    server.set_payload_max_length(kMaxInputBytes);
-    server.set_read_timeout(10, 0);
-    server.set_write_timeout(15, 0);
-    server.set_default_headers({
-        {"X-Content-Type-Options", "nosniff"},
-        {"Referrer-Policy", "no-referrer"},
-        {"Access-Control-Allow-Origin", "*"},
-        {"Access-Control-Allow-Methods", "GET, POST, OPTIONS"},
-        {"Access-Control-Allow-Headers", "Content-Type"}
+    server.set_payload_max_length(1024 * 1024);
+    server.set_read_timeout(15, 0);
+    server.set_write_timeout(120, 0);
+    server.set_keep_alive_max_count(20);
+
+    server.Get("/api/health", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(R"({"ok":true,"service":"videodl-cpp"})", "application/json; charset=utf-8");
     });
 
-    server.Options(R"(.*)", [](const httplib::Request &, httplib::Response &res) {
-        res.status = 204;
-    });
-    server.Get("/api/health", [](const httplib::Request &, httplib::Response &res) {
-        set_json(res, 200, {
-            {"online", true}, {"service", "VideoDL"},
-            {"engine", "yt-dlp"}, {"api", "v1"}
-        });
-    });
+    server.Post("/api/resolve", [](const httplib::Request& req, httplib::Response& res) {
+        if (!rate_allowed(req, res, 10)) return;
 
-    server.Post("/api/resolve", [](const httplib::Request &req, httplib::Response &res) {
-        if (!allow_request(client_ip(req))) {
-            set_json(res, 429, {{"error", "请求过于频繁，请稍后再试。"}, {"retry_after_seconds", 60}});
-            return;
-        }
-        json input;
         try {
-            input = json::parse(req.body);
-        } catch (...) {
-            set_json(res, 400, {{"error", "请求不是有效的 JSON。"}});
-            return;
-        }
-        if (!input.is_object() || !input.contains("url") || !input["url"].is_string()) {
-            set_json(res, 400, {{"error", "请提供视频 URL。"}});
-            return;
-        }
-
-        const std::string url = trim(input["url"].get<std::string>());
-        if (url.empty() || url.size() > 2048 ||
-            url.find_first_of("\r\n\t ") != std::string::npos) {
-            set_json(res, 400, {{"error", "视频链接为空或格式无效。"}});
-            return;
-        }
-        if (get_allowed_host(url).empty()) {
-            set_json(res, 400, {
-                {"error", "暂不支持这个链接域名。当前版本仅接受常见视频站点链接。"},
-                {"supported_domains", {
-                    "YouTube", "Bilibili", "TikTok", "Douyin", "Vimeo",
-                    "X / Twitter", "Instagram", "Facebook", "Twitch",
-                    "Dailymotion", "Reddit", "SoundCloud", "Niconico",
-                    "Weibo", "AcFun", "Ixigua", "Youku", "iQIYI"
-                }}
-            });
-            return;
-        }
-
-        const ProcessResult process = run_ytdlp(url);
-        if (process.timed_out) {
-            set_json(res, 504, {{"error", "解析超时。请稍后重试，或检查视频链接。"}});
-            return;
-        }
-        if (process.output_too_large) {
-            set_json(res, 502, {{"error", "解析结果过大，已停止本次任务。"}});
-            return;
-        }
-        if (process.exit_code != 0) {
-            std::string message = trim(process.error);
-            if (message.empty()) {
-                message = "yt-dlp 无法解析该视频。视频可能不受支持、需要登录，或受到地区限制。";
+            const json body = json::parse(req.body);
+            const std::string url = body.value("url", std::string{});
+            if (!is_supported_url(url)) {
+                res.status = 400;
+                res.set_content(error_json("链接无效或暂不支持该视频站点。").dump(), "application/json; charset=utf-8");
+                return;
             }
-            if (message.size() > 500) message.resize(500);
-            set_json(res, 422, {{"error", message}});
-            return;
-        }
 
-        json info;
-        try {
-            info = json::parse(process.output);
+            json data;
+            std::string error;
+            int status = 422;
+            if (!parse_video(url, data, error, status)) {
+                res.status = status;
+                res.set_content(error_json(error).dump(), "application/json; charset=utf-8");
+                return;
+            }
+            res.set_content(data.dump(), "application/json; charset=utf-8");
         } catch (...) {
-            set_json(res, 502, {{"error", "解析引擎返回的数据无法读取。"}});
-            return;
+            res.status = 400;
+            res.set_content(error_json("请求内容格式错误。").dump(), "application/json; charset=utf-8");
         }
-
-        json result = filter_info(info, url);
-        if (result["formats"].empty()) {
-            set_json(res, 422, {
-                {"error", "已取得视频信息，但没有可供浏览器直接打开的 HTTP/HTTPS 格式。该视频可能只有分离音视频流或受防盗链保护。"}
-            });
-            return;
-        }
-        set_json(res, 200, result);
     });
 
-    server.set_mount_point("/", "./frontend");
-    const char *port_env = std::getenv("PORT");
-    int port = 10000;
-    if (port_env && *port_env) {
-        try { port = std::stoi(port_env); } catch (...) { port = 10000; }
+    server.Get("/api/download", [](const httplib::Request& req, httplib::Response& res) {
+        if (!rate_allowed(req, res, 3)) return;
+
+        const std::string url = req.get_param_value("url");
+        if (!is_supported_url(url)) {
+            res.status = 400;
+            res.set_content("Invalid or unsupported video URL", "text/plain; charset=utf-8");
+            return;
+        }
+
+        std::string temp_template = "/tmp/vdl-XXXXXX";
+        std::vector<char> temp_buffer(temp_template.begin(), temp_template.end());
+        temp_buffer.push_back('\0');
+        char* created = mkdtemp(temp_buffer.data());
+        if (!created) {
+            res.status = 500;
+            res.set_content("Unable to create temporary download directory", "text/plain; charset=utf-8");
+            return;
+        }
+        const fs::path temp_dir(created);
+        const std::string output_template = (temp_dir / "%(title).100B.%(ext)s").string();
+
+        const auto proc = run_process({
+            YT_DLP, "--no-warnings", "--no-playlist", "--no-progress", "--no-color",
+            "--no-cache-dir", "--restrict-filenames", "--format", "bestvideo+bestaudio/best",
+            "--merge-output-format", "mp4", "--output", output_template,
+            "--socket-timeout", "20", "--retries", "1",
+            "--js-runtimes", "deno", "--remote-components", "ejs:github", url
+        }, DOWNLOAD_TIMEOUT_SECONDS, 1024 * 1024);
+
+        if (proc.timed_out || proc.exit_code != 0) {
+            fs::remove_all(temp_dir);
+            res.status = proc.timed_out ? 504 : 422;
+            res.set_content(proc.timed_out ? "Download timed out. Please try again." :
+                                             "Download failed. The source may require login or block access.",
+                            "text/plain; charset=utf-8");
+            return;
+        }
+
+        fs::path output_file;
+        try {
+            for (const auto& entry : fs::directory_iterator(temp_dir)) {
+                if (entry.is_regular_file()) {
+                    output_file = entry.path();
+                    break;
+                }
+            }
+        } catch (...) {}
+
+        if (output_file.empty()) {
+            fs::remove_all(temp_dir);
+            res.status = 500;
+            res.set_content("The downloader did not produce a media file.", "text/plain; charset=utf-8");
+            return;
+        }
+
+        std::error_code ec;
+        const auto file_size = fs::file_size(output_file, ec);
+        if (ec || file_size == 0 || file_size > MAX_DOWNLOAD_BYTES) {
+            fs::remove_all(temp_dir);
+            res.status = 413;
+            res.set_content("File is empty or exceeds the 7 GB temporary storage limit.", "text/plain; charset=utf-8");
+            return;
+        }
+
+        auto stream = std::make_shared<std::ifstream>(output_file, std::ios::binary);
+        if (!stream->is_open()) {
+            fs::remove_all(temp_dir);
+            res.status = 500;
+            res.set_content("Unable to open the downloaded file.", "text/plain; charset=utf-8");
+            return;
+        }
+
+        res.set_header("Content-Disposition", "attachment; filename=\"" + ascii_filename(output_file) + "\"");
+        res.set_header("Cache-Control", "no-store");
+        res.set_content_provider(
+            static_cast<std::size_t>(file_size),
+            "application/octet-stream",
+            [stream, file_size](std::size_t offset, std::size_t length, httplib::DataSink& sink) {
+                if (offset >= file_size) return true;
+                stream->clear();
+                stream->seekg(static_cast<std::streamoff>(offset));
+                std::array<char, 64 * 1024> buffer{};
+                std::size_t remaining = std::min<std::size_t>(length, static_cast<std::size_t>(file_size - offset));
+                while (remaining > 0) {
+                    const auto chunk = std::min(remaining, buffer.size());
+                    stream->read(buffer.data(), static_cast<std::streamsize>(chunk));
+                    const auto read_count = static_cast<std::size_t>(stream->gcount());
+                    if (read_count == 0 || !sink.write(buffer.data(), read_count)) return false;
+                    remaining -= read_count;
+                }
+                return true;
+            },
+            [temp_dir](bool) {
+                std::error_code remove_error;
+                fs::remove_all(temp_dir, remove_error);
+            });
+    });
+
+    const char* port_env = std::getenv("PORT");
+    int port = port_env ? std::atoi(port_env) : 10000;
+    if (port <= 0 || port > 65535) port = 10000;
+
+    std::cout << "VideoDL C++ API listening on 0.0.0.0:" << port << std::endl;
+    if (!server.listen("0.0.0.0", port)) {
+        std::cerr << "Failed to start HTTP server" << std::endl;
+        return 1;
     }
-    if (port < 1 || port > 65535) port = 10000;
-    server.new_task_queue = [] { return new httplib::ThreadPool(2); };
-    return server.listen("0.0.0.0", port) ? 0 : 1;
+    return 0;
 }

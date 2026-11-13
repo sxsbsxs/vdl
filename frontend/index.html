@@ -2,80 +2,108 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f4f7fb">
-  <meta name="description" content="VideoDL：粘贴视频链接，解析可用格式并获取源站下载直链。">
-  <title>VideoDL · 在线视频解析</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f5f5">
+  <meta name="description" content="VideoDL 在线视频解析与下载">
+  <title>VideoDL — 视频解析下载</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="./" aria-label="VideoDL 首页">
-      <span class="brand-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.8h14a1.7 1.7 0 0 1 1.7 1.7v11a1.7 1.7 0 0 1-1.7 1.7H5a1.7 1.7 0 0 1-1.7-1.7v-11A1.7 1.7 0 0 1 5 4.8Z"/><path d="m10 8.4 5.7 3.6-5.7 3.6V8.4Z"/></svg></span>
-      <span>Video<span class="brand-accent">DL</span></span>
-    </a>
-    <div class="top-meta"><span class="status-dot"></span> VideoDL 网页版</div>
-  </header>
-  <main class="page">
-    <section class="hero">
-      <div class="eyebrow"><span class="eyebrow-line"></span> SIMPLE VIDEO LINK PARSER</div>
-      <h1>视频链接，<span>一贴即解析。</span></h1>
-      <p class="hero-copy">粘贴视频页面地址，获取视频信息、可用格式和源站直链。</p>
-      <form id="resolve-form" class="url-card">
-        <label class="input-label" for="video-url">视频链接</label>
-        <div class="input-row">
-          <span class="link-icon" aria-hidden="true">↗</span>
-          <input id="video-url" name="url" type="url" inputmode="url" autocomplete="url"
-                 placeholder="粘贴 YouTube、Bilibili 等视频链接" required maxlength="2048">
-          <button id="paste-button" class="paste-button" type="button">粘贴</button>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="VideoDL 首页">
+        <span class="brand-mark">V</span>
+        <span>VideoDL</span>
+      </a>
+      <span class="topbar-note"><span class="status-dot"></span> 在线解析</span>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow"><span class="eyebrow-line"></span> VIDEO LINK PARSER</div>
+        <h1>视频链接，<span>一贴即下。</span></h1>
+        <p class="hero-copy">粘贴视频页面地址，解析可用画质，直接下载到设备。</p>
+
+        <form id="resolve-form" class="input-card">
+          <label for="video-url" class="sr-only">视频链接</label>
+          <div class="input-row">
+            <span class="link-icon" aria-hidden="true">↗</span>
+            <input id="video-url" type="url" inputmode="url" autocomplete="url"
+              placeholder="粘贴 Bilibili、YouTube、抖音等视频链接" required>
+            <button type="button" class="paste-button" id="paste-button">粘贴</button>
+          </div>
+          <button class="primary-button" id="resolve-button" type="submit">
+            <span id="resolve-label">解析视频</span><span class="button-arrow">→</span>
+          </button>
+        </form>
+
+        <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+        <div class="support-line">
+          <span class="check-mark">✓</span>
+          支持多个常见视频平台
+          <span class="support-separator">·</span>
+          无需登录 VideoDL
+          <span class="support-separator">·</span>
+          不保存解析历史
         </div>
-        <div class="form-footer">
-          <span class="input-hint">支持单个公开视频链接 · 暂不支持播放列表</span>
-          <button id="resolve-button" class="primary-button" type="submit">
-            <span class="button-icon">⌕</span><span id="button-label">解析视频</span>
+      </section>
+
+      <section id="result-section" class="result-section" hidden aria-live="polite">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">解析结果</div>
+            <h2>视频信息</h2>
+          </div>
+          <button id="clear-button" class="text-button" type="button">清除结果</button>
+        </div>
+
+        <article class="video-card">
+          <div class="video-preview">
+            <img id="video-thumbnail" alt="视频封面" referrerpolicy="no-referrer">
+            <div id="thumbnail-fallback" class="thumbnail-fallback" hidden>VideoDL</div>
+          </div>
+          <div class="video-details">
+            <div class="video-meta"><span id="video-platform">VIDEO</span><span id="video-duration"></span></div>
+            <h3 id="video-title"></h3>
+            <p id="video-uploader"></p>
+            <a id="source-link" href="#" target="_blank" rel="noopener noreferrer">打开原视频 ↗</a>
+          </div>
+        </article>
+
+        <div class="formats-heading">
+          <div>
+            <div class="section-kicker">AVAILABLE FORMATS</div>
+            <h2>可用格式</h2>
+          </div>
+          <span id="format-count" class="format-count">0 个格式</span>
+        </div>
+        <div id="format-list" class="format-list"></div>
+
+        <div class="download-panel">
+          <div class="download-copy">
+            <span class="download-icon">↓</span>
+            <div>
+              <strong>下载最佳画质</strong>
+              <small>自动选择最佳视频与音频，并在需要时合并</small>
+            </div>
+          </div>
+          <button id="download-button" class="download-button" type="button">
+            <span id="download-label">下载视频</span><span aria-hidden="true">↓</span>
           </button>
         </div>
-      </form>
-      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-      <div class="privacy-note"><span>✓</span> GitHub Actions 负责解析，不中转或保存完整视频文件</div><p class="input-hint">提交时需要登录 GitHub。解析请求与结果会公开显示在仓库 Issue 中，请勿提交私人视频或含令牌的链接。</p>
-    </section>
-    <section id="result" class="result-section" hidden>
-      <div class="section-heading">
-        <div><div class="section-kicker">ANALYSIS RESULT</div><h2>解析结果</h2></div>
-        <button id="clear-button" class="text-button" type="button">清除结果</button>
-      </div>
-      <article class="video-card">
-        <div class="thumbnail-wrap">
-          <img id="video-thumbnail" alt="视频封面" loading="lazy">
-          <span id="video-duration" class="duration-chip"></span>
-        </div>
-        <div class="video-info">
-          <div class="source-tag" id="video-source">VIDEO</div>
-          <h3 id="video-title"></h3>
-          <p id="video-uploader" class="video-uploader"></p>
-          <a id="source-link" class="source-link" target="_blank" rel="noopener noreferrer">打开原视频 ↗</a>
-        </div>
-      </article>
-      <div class="formats-heading">
-        <div><div class="section-kicker">AVAILABLE STREAMS</div><h2>可用下载格式</h2></div>
-        <span id="format-count" class="count-chip">0 个格式</span>
-      </div>
-      <div class="format-explainer">直链来自视频源站。部分网站要求 Referer、登录或专用下载器；浏览器能否直接保存取决于源站规则。</div>
-      <div id="format-list" class="format-list"></div>
-    </section>
-    <section class="features">
-      <div class="feature"><span class="feature-icon">↗</span><div><b>源站直链</b><small>不经本站中转视频文件</small></div></div>
-      <div class="feature"><span class="feature-icon">▤</span><div><b>格式信息</b><small>查看分辨率、编码与大小</small></div></div>
-      <div class="feature"><span class="feature-icon">⌁</span><div><b>多站点解析</b><small>由 yt-dlp 提供解析能力</small></div></div>
-    </section>
+      </section>
+    </main>
+
     <footer class="footer">
-      <div class="footer-brand">VideoDL <span>·</span> Open Source</div>
-      <p>仅用于获取你有权访问和下载的内容。请遵守来源网站的服务条款与当地法律。</p>
-      <p class="footer-small">解析结果可能因地区、登录状态、源站策略或 yt-dlp 版本而变化。</p>
+      <span>VideoDL</span>
+      <span>简单 · 直接 · 开源</span>
     </footer>
-  </main>
+  </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="config.js?v=github-issue"></script>
-  <script src="app.js?v=github-issue-2"></script>
 </body>
 </html>

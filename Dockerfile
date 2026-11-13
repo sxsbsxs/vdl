@@ -1,34 +1,44 @@
+# Cloudflare Containers currently require linux/amd64 images.
 FROM ubuntu:24.04 AS build
+
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git ca-certificates nlohmann-json3-dev \
+    ca-certificates curl cmake g++ make \
     && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
 COPY CMakeLists.txt ./
 COPY backend ./backend
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build --parallel 2
 
-FROM ubuntu:24.04
+RUN mkdir -p vendor \
+    && curl -fsSL https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.27.0/httplib.h -o vendor/httplib.h \
+    && curl -fsSL https://raw.githubusercontent.com/nlohmann/json/v3.12.0/single_include/nlohmann/json.hpp -o vendor/json.hpp \
+    && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j2
+
+FROM ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PORT=10000
+ENV HOME=/tmp
+ENV XDG_CACHE_HOME=/tmp/.cache
+ENV DENO_INSTALL=/usr/local
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl unzip python3 python3-venv \
+    ca-certificates curl ffmpeg libstdc++6 unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# yt-dlp uses a JavaScript runtime for full YouTube extraction support.
+# yt-dlp_linux is the upstream standalone x86_64 release binary.
+RUN curl -fL --retry 3 https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+      -o /usr/local/bin/yt-dlp \
+    && chmod 0755 /usr/local/bin/yt-dlp
+
+# Deno is used by yt-dlp for JavaScript-dependent extractors.
 RUN curl -fsSL https://deno.land/install.sh -o /tmp/deno-install.sh \
-    && DENO_INSTALL=/usr/local sh /tmp/deno-install.sh \
+    && sh /tmp/deno-install.sh \
     && rm -f /tmp/deno-install.sh
 
-RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade "yt-dlp[default]"
+COPY --from=build /src/build/videodl-api /usr/local/bin/videodl-api
 
-WORKDIR /app
-COPY --from=build /src/build/vdl-server /app/vdl-server
-COPY frontend /app/frontend
-
-ENV PORT=10000
-ENV YTDLP_BIN=/opt/venv/bin/yt-dlp
-ENV PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 EXPOSE 10000
-CMD ["/app/vdl-server"]
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/videodl-api"]

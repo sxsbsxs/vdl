@@ -1,0 +1,15 @@
+{
+  "name": "videodl",
+  "version": "3.0.0",
+  "private": true,
+  "description": "C++ video parsing API with HTML frontend on Cloudflare Containers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "containers": "wrangler containers list",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}
