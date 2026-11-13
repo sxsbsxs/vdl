@@ -19,6 +19,8 @@ RUN mkdir -p vendor \
 FROM ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PORT=10000
+ENV HOME=/tmp
+ENV XDG_CACHE_HOME=/tmp/.cache
 ENV DENO_INSTALL=/usr/local
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
