@@ -20,19 +20,13 @@ function notify(message) {
   toast.textContent = message;
   toast.classList.add("show");
   window.clearTimeout(notify.timer);
-  notify.timer = window.setTimeout(function () {
-    toast.classList.remove("show");
-  }, 2200);
+  notify.timer = window.setTimeout(() => toast.classList.remove("show"), 2200);
 }
 function formatBytes(bytes) {
   if (bytes === null || bytes === undefined || Number(bytes) <= 0) return "大小未知";
   const units = ["B", "KB", "MB", "GB"];
-  let value = Number(bytes);
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index += 1;
-  }
+  let value = Number(bytes), index = 0;
+  while (value >= 1024 && index < units.length - 1) { value /= 1024; index++; }
   return value.toFixed(index === 0 ? 0 : 1) + " " + units[index];
 }
 function formatDuration(seconds) {
@@ -41,8 +35,7 @@ function formatDuration(seconds) {
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const secs = total % 60;
-  return hours > 0
-    ? hours + ":" + String(minutes).padStart(2, "0") + ":" + String(secs).padStart(2, "0")
+  return hours > 0 ? hours + ":" + String(minutes).padStart(2, "0") + ":" + String(secs).padStart(2, "0")
     : minutes + ":" + String(secs).padStart(2, "0");
 }
 function makeBadge(label) {
@@ -61,7 +54,6 @@ function createFormatRow(format) {
   const resolution = format.height ? String(format.height) + "p" : (format.format_note || "原始格式");
   title.textContent = resolution + " · " + (format.ext || "媒体") + " · " + (format.format_id || "格式");
   main.appendChild(title);
-
   const meta = document.createElement("div");
   meta.className = "format-meta";
   const details = [];
@@ -70,7 +62,6 @@ function createFormatRow(format) {
   if (format.acodec && format.acodec !== "none") details.push(format.acodec);
   meta.textContent = details.join(" · ") || "源站格式";
   main.appendChild(meta);
-
   const badges = document.createElement("div");
   badges.className = "stream-badges";
   if (format.has_video) badges.appendChild(makeBadge("视频"));
@@ -78,11 +69,9 @@ function createFormatRow(format) {
   if (format.has_video && !format.has_audio) badges.appendChild(makeBadge("需要单独音轨"));
   if (!format.has_video && format.has_audio) badges.appendChild(makeBadge("纯音频"));
   main.appendChild(badges);
-
   const size = document.createElement("div");
   size.className = "format-size";
   size.textContent = formatBytes(format.filesize);
-
   const actions = document.createElement("div");
   actions.className = "format-actions";
   const open = document.createElement("a");
@@ -93,12 +82,11 @@ function createFormatRow(format) {
   open.textContent = "打开直链";
   open.title = "在新标签页打开源站媒体地址";
   actions.appendChild(open);
-
   const copy = document.createElement("button");
   copy.className = "copy-button";
   copy.type = "button";
   copy.textContent = "复制链接";
-  copy.addEventListener("click", async function () {
+  copy.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(format.url);
       notify("直链已复制");
@@ -120,60 +108,57 @@ function renderResult(data) {
   document.getElementById("video-title").textContent = data.title || "未命名视频";
   document.getElementById("video-uploader").textContent = data.uploader || "上传者信息不可用";
   document.getElementById("video-source").textContent = (data.extractor || "VIDEO").toUpperCase();
-
   const thumbnail = document.getElementById("video-thumbnail");
   if (data.thumbnail) {
     thumbnail.src = data.thumbnail;
     thumbnail.hidden = false;
+    thumbnail.onerror = () => { thumbnail.hidden = true; };
   } else {
     thumbnail.removeAttribute("src");
     thumbnail.hidden = true;
   }
-
   const duration = document.getElementById("video-duration");
   duration.textContent = formatDuration(data.duration);
   duration.hidden = !duration.textContent;
   const sourceLink = document.getElementById("source-link");
   sourceLink.href = data.webpage_url || input.value.trim();
-
   formatList.replaceChildren();
   const formats = Array.isArray(data.formats) ? data.formats : [];
-  formats.forEach(function (format) { formatList.appendChild(createFormatRow(format)); });
+  formats.forEach(format => formatList.appendChild(createFormatRow(format)));
   document.getElementById("format-count").textContent = formats.length + " 个格式";
   resultSection.hidden = false;
   resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
 }
-form.addEventListener("submit", function (event) {
+form.addEventListener("submit", async event => {
   event.preventDefault();
   const url = input.value.trim();
-  if (!url) {
-    showNotice("请先粘贴一个视频链接。", "error");
-    return;
-  }
-  if (!/^https?:\/\//i.test(url)) {
-    showNotice("请输入以 http:// 或 https:// 开头的视频页面链接。", "error");
-    return;
-  }
-
-  const title = "VideoDL 视频解析请求";
-  const body = "视频链接：\n" + url + "\n\n请只提交你有权访问和下载的公开视频链接。";
-  const issueUrl = "https://github.com/sxsbsxs/vdl/issues/new"
-    + "?template=videodl-request.md"
-    + "&title=" + encodeURIComponent(title)
-    + "&body=" + encodeURIComponent(body);
-  showNotice("即将打开 GitHub 提交页面。登录 GitHub 并创建 Issue 后，Actions 会自动解析；完成后结果会回复在该 Issue 下。", "success");
-  window.open(issueUrl, "_blank", "noopener,noreferrer");
-});
-document.getElementById("paste-button").addEventListener("click", async function () {
+  if (!url) return showNotice("请先粘贴一个视频链接。", "error");
+  if (!/^https?:\/\//i.test(url)) return showNotice("请输入以 http:// 或 https:// 开头的视频页面链接。", "error");
+  resolveButton.disabled = true;
+  buttonLabel.textContent = "正在解析…";
+  showNotice("正在启动解析引擎，首次请求可能需要等待容器启动。", "success");
   try {
-    input.value = await navigator.clipboard.readText();
-    input.focus();
-  } catch (_) {
-    input.focus();
-    notify("请长按输入框并粘贴链接");
+    const response = await fetch("/api/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("解析失败（HTTP " + response.status + "）"));
+    renderResult(data);
+    showNotice("解析完成，已获取 " + (data.formats || []).length + " 个可用格式。", "success");
+  } catch (error) {
+    showNotice(error.message || "网络错误，请稍后重试。", "error");
+  } finally {
+    resolveButton.disabled = false;
+    buttonLabel.textContent = "解析视频";
   }
 });
-document.getElementById("clear-button").addEventListener("click", function () {
+document.getElementById("paste-button").addEventListener("click", async () => {
+  try { input.value = await navigator.clipboard.readText(); input.focus(); }
+  catch (_) { input.focus(); notify("请长按输入框并粘贴链接"); }
+});
+document.getElementById("clear-button").addEventListener("click", () => {
   resultSection.hidden = true;
   formatList.replaceChildren();
   hideNotice();
