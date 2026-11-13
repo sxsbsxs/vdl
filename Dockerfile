@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl unzip python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# yt-dlp uses a JavaScript runtime for full YouTube extraction support.
 RUN curl -fsSL https://deno.land/install.sh -o /tmp/deno-install.sh \
     && DENO_INSTALL=/usr/local sh /tmp/deno-install.sh \
     && rm -f /tmp/deno-install.sh
