@@ -54,7 +54,8 @@ jobs:
               "youku.com", "iqiyi.com"
           )
           if (urlparse(url).scheme not in ("http", "https") or urlparse(url).username or
-              urlparse(url).password or not host or\n              not any(host == d or host.endswith("." + d) for d in allowed)):
+              urlparse(url).password or not host or
+              not any(host == d or host.endswith("." + d) for d in allowed)):
               print("::error::Unsupported video host")
               sys.exit(1)
 
