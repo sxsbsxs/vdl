@@ -146,38 +146,27 @@ function renderResult(data) {
   resultSection.hidden = false;
   resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
 }
-form.addEventListener("submit", async function (event) {
+form.addEventListener("submit", function (event) {
   event.preventDefault();
   const url = input.value.trim();
   if (!url) {
     showNotice("请先粘贴一个视频链接。", "error");
     return;
   }
-  if (IS_GITHUB_PAGES && !API_BASE) {
-    showNotice("VideoDL 网页已由 GitHub Pages 托管，但解析 API 还没有连接。请先部署 C++ 后端，再在 frontend/config.js 中填写 window.VIDEODL_API_BASE。", "error");
+  if (!/^https?:\\/\\//i.test(url)) {
+    showNotice("请输入以 http:// 或 https:// 开头的视频页面链接。", "error");
     return;
   }
 
-  hideNotice();
-  resultSection.hidden = true;
-  resolveButton.disabled = true;
-  buttonLabel.textContent = "正在解析…";
-  try {
-    const response = await fetch(API_BASE + "/api/resolve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url })
-    });
-    const data = await response.json().catch(function () { return {}; });
-    if (!response.ok) throw new Error(data.error || ("解析失败，HTTP " + response.status));
-    renderResult(data);
-    showNotice("解析完成。直链来自源站，是否能直接下载取决于源站的访问规则。", "success");
-  } catch (error) {
-    showNotice(error.message || "网络错误，请稍后重试。", "error");
-  } finally {
-    resolveButton.disabled = false;
-    buttonLabel.textContent = "解析视频";
-  }
+  const title = "VideoDL 视频解析请求";
+  const body = "视频链接：\\n" + url + "\\n\\n请只提交你有权访问和下载的公开视频链接。";
+  const issueUrl = "https://github.com/sxsbsxs/vdl/issues/new"
+    + "?template=videodl-request.md"
+    + "&title=" + encodeURIComponent(title)
+    + "&labels=videodl-request"
+    + "&body=" + encodeURIComponent(body);
+  showNotice("即将打开 GitHub 提交页面。登录 GitHub 并创建 Issue 后，Actions 会自动解析；完成后结果会回复在该 Issue 下。", "success");
+  window.open(issueUrl, "_blank", "noopener,noreferrer");
 });
 document.getElementById("paste-button").addEventListener("click", async function () {
   try {
