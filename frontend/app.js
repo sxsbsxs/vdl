@@ -163,7 +163,6 @@ form.addEventListener("submit", function (event) {
   const issueUrl = "https://github.com/sxsbsxs/vdl/issues/new"
     + "?template=videodl-request.md"
     + "&title=" + encodeURIComponent(title)
-    + "&labels=videodl-request"
     + "&body=" + encodeURIComponent(body);
   showNotice("即将打开 GitHub 提交页面。登录 GitHub 并创建 Issue 后，Actions 会自动解析；完成后结果会回复在该 Issue 下。", "success");
   window.open(issueUrl, "_blank", "noopener,noreferrer");
