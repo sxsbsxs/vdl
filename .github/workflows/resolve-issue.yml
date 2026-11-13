@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   resolve:
-    if: contains(github.event.issue.labels.*.name, 'videodl-request')
+    if: startsWith(github.event.issue.title, 'VideoDL')
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
