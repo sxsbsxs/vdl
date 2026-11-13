@@ -1,3 +1,6 @@
+const API_BASE = String(window.VIDEODL_API_BASE || "").trim().replace(/\/+$/, "");
+const IS_GITHUB_PAGES = window.location.hostname.endsWith("github.io");
+
 const form = document.getElementById("resolve-form");
 const input = document.getElementById("video-url");
 const resolveButton = document.getElementById("resolve-button");
@@ -150,12 +153,17 @@ form.addEventListener("submit", async function (event) {
     showNotice("请先粘贴一个视频链接。", "error");
     return;
   }
+  if (IS_GITHUB_PAGES && !API_BASE) {
+    showNotice("VideoDL 网页已由 GitHub Pages 托管，但解析 API 还没有连接。请先部署 C++ 后端，再在 frontend/config.js 中填写 window.VIDEODL_API_BASE。", "error");
+    return;
+  }
+
   hideNotice();
   resultSection.hidden = true;
   resolveButton.disabled = true;
   buttonLabel.textContent = "正在解析…";
   try {
-    const response = await fetch("/api/resolve", {
+    const response = await fetch(API_BASE + "/api/resolve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: url })
