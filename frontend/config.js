@@ -1,3 +1,2 @@
-// VideoDL submits parsing requests through GitHub Issues and GitHub Actions.
-// No external API endpoint or frontend secret is required.
+// Cloudflare Container service settings are defined in wrangler.jsonc.
 window.VIDEODL_API_BASE = "";
