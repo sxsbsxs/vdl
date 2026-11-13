@@ -19,11 +19,8 @@ export class VideoDLContainer extends DurableObject {
     const url = new URL(request.url);
     url.protocol = "http:";
     url.host = "container";
-    const headers = new Headers(request.headers);
-    headers.delete("host");
     // Do not trust a caller-supplied forwarding chain for the C++ rate limiter.
     const clientIp = request.headers.get("CF-Connecting-IP");
-    if (clientIp) headers.set("X-Forwarded-For", clientIp);
     const forwarded = new Request(url, request);
     forwarded.headers.delete("host");
     if (clientIp) forwarded.headers.set("X-Forwarded-For", clientIp);
