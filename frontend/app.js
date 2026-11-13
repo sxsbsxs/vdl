@@ -153,13 +153,13 @@ form.addEventListener("submit", function (event) {
     showNotice("请先粘贴一个视频链接。", "error");
     return;
   }
-  if (!/^https?:\\/\\//i.test(url)) {
+  if (!/^https?:\/\//i.test(url)) {
     showNotice("请输入以 http:// 或 https:// 开头的视频页面链接。", "error");
     return;
   }
 
   const title = "VideoDL 视频解析请求";
-  const body = "视频链接：\\n" + url + "\\n\\n请只提交你有权访问和下载的公开视频链接。";
+  const body = "视频链接：\n" + url + "\n\n请只提交你有权访问和下载的公开视频链接。";
   const issueUrl = "https://github.com/sxsbsxs/vdl/issues/new"
     + "?template=videodl-request.md"
     + "&title=" + encodeURIComponent(title)
